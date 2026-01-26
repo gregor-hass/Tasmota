@@ -1044,6 +1044,7 @@
 #define D_SENSOR_C8_CO2_5K_TX  "C8-CO2-5K Tx"
 #define D_SENSOR_MKSKYBLU_TX   "MkSkyBlu Tx"
 #define D_SENSOR_MKSKYBLU_RX   "MkSkyBlu Rx"
+#define D_SENSOR_DLBUS_RX      "UVR1611 DL-Bus Rx"
 
 // Units
 #define D_UNIT_AMPERE "A"

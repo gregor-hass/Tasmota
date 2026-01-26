@@ -1,0 +1,8 @@
+{
+  "name": "DlBus",
+  "version": "1.0.0",
+  "description": "DL-Bus RMT receiver for UVR1611 solar controllers",
+  "keywords": ["dlbus", "uvr1611", "rmt", "esp32"],
+  "frameworks": ["arduino", "espidf"],
+  "platforms": ["espressif32"]
+}

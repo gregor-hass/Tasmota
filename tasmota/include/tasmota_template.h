@@ -237,6 +237,7 @@ enum UserSelectablePins {
 #endif
   GPIO_VID6608_F, GPIO_VID6608_CW,      // VID6608
   GPIO_MKSKYBLU_TX, GPIO_MKSKYBLU_RX,   // MakeSkyBlue solar charge controller
+  GPIO_DLBUS_RX,   // UVR1611 DL-Bus Rx
   GPIO_SENSOR_END };
 
 // Error as warning to rethink GPIO usage with max 2045
@@ -515,7 +516,7 @@ const char kSensorNames[] PROGMEM =
   D_SENSOR_HSDIO_CMD "|" D_SENSOR_HSDIO_CLK "|" D_SENSOR_HSDIO_RST "|" D_SENSOR_HSDIO_D0 "|" D_SENSOR_HSDIO_D1 "|" D_SENSOR_HSDIO_D2 "|" D_SENSOR_HSDIO_D3 "|"
 #endif
   D_VID6608_F "|" D_VID6608_CW "|"
-  D_SENSOR_MKSKYBLU_TX "|" D_SENSOR_MKSKYBLU_RX "|"
+  D_SENSOR_MKSKYBLU_TX "|" D_SENSOR_MKSKYBLU_RX "|" D_SENSOR_DLBUS_RX "|"
 ;
 
 const char kSensorNamesFixed[] PROGMEM =
@@ -550,6 +551,7 @@ const char kSensorNamesFixed[] PROGMEM =
 #else
 #define MAX_MKSKYBLU_IF          3  // MakeSkyBlue solar charger: ESP82xx-NRG supports up to 3 phases
 #endif
+#define MAX_DLBUS_RX             1  // For now only allow 1 DL-Bus Rx
 
 const uint16_t kGpioNiceList[] PROGMEM = {
   GPIO_NONE,                                     // Not used
@@ -1347,6 +1349,9 @@ const uint16_t kGpioNiceList[] PROGMEM = {
   AGPIO(GPIO_VID6608_CW) + AGMAX(4),             // VID6608 direction interface (max 4 motors)
 #endif
 
+#ifdef USE_XDRV_100_DLBUS
+  AGPIO(GPIO_DLBUS_RX) + AGMAX(MAX_DLBUS_RX),
+#endif
 };
 
 /*-------------------------------------------------------------------------------------------*\
