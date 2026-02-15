@@ -78,7 +78,7 @@ public:
     // ===== UniversalPanel Interface =====
     bool drawPixel(int16_t x, int16_t y, uint16_t color) override;
     bool fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) override;
-    bool pushColors(uint16_t *data, uint16_t len, bool not_swapped = false) override;
+    bool pushColors(uint16_t *data, uint32_t len, bool not_swapped = false) override;
     bool setAddrWindow(int16_t x0, int16_t y0, int16_t x1, int16_t y1) override;
     bool drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color) override;
     bool drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color) override;
@@ -98,6 +98,8 @@ private:
 
     // ===== Display State =====
     uint8_t rotation;              // Current rotation (0-3)
+    uint16_t width;                // Current width
+    uint16_t height;               // Current height
     int16_t window_x0, window_y0, window_x1, window_y1;
     bool display_on;
     bool inverted;

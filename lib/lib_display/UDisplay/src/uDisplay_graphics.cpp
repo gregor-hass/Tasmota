@@ -67,16 +67,18 @@ void uDisplay::fillScreen(uint16_t color) {
 
 static inline void lvgl_color_swap(uint16_t *data, uint16_t len) { for (uint32_t i = 0; i < len; i++) (data[i] = data[i] << 8 | data[i] >> 8); }
 
-void uDisplay::pushColors(uint16_t *data, uint16_t len, boolean not_swapped) {  //not_swapped is always true in call form LVGL driver!!!!
+void uDisplay::pushColors(uint16_t *data, uint32_t len, boolean not_swapped) {  //not_swapped is always true in call form LVGL driver!!!!
 
     if (lvgl_param.swap_color) {
         not_swapped = !not_swapped;
     }
-    universal_panel->pushColors(data, len, not_swapped);
+    if (!universal_panel->pushColors(data, len, not_swapped)) {
+        pushColorsMono(data, len, not_swapped);
+    }
 }
 
 // convert to mono, these are framebuffer based
-void uDisplay::pushColorsMono(uint16_t *data, uint16_t len, bool rgb16_swap) {
+void uDisplay::pushColorsMono(uint16_t *data, uint32_t len, bool rgb16_swap) {
   // pixel is white if at least one of the 3 components is above 50%
   // this is tested with a simple mask, swapped if needed
   uint16_t rgb16_to_mono_mask = rgb16_swap ? RGB16_SWAP_TO_MONO : RGB16_TO_MONO;
@@ -104,7 +106,12 @@ void uDisplay::pushColorsMono(uint16_t *data, uint16_t len, bool rgb16_swap) {
 }
 
 void uDisplay::setAddrWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
-    universal_panel->setAddrWindow(x0, y0, x1, y1);
+    if (!universal_panel->setAddrWindow(x0, y0, x1, y1)) {
+        seta_xp1 = x0;
+        seta_yp1 = y0;
+        seta_xp2 = x1;
+        seta_yp2 = y1;
+    }
 }
 
 void uDisplay::setRotation(uint8_t rotation) {
