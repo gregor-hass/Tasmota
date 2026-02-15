@@ -71,5 +71,13 @@
         "commands": "platformio-ide.rebuildProjectIndex"
       }
     ],
-    "C_Cpp.dimInactiveRegions": false
+    "C_Cpp.dimInactiveRegions": false,
+    "idf.espIdfPathWin": "C:\\Users\\grego\\esp\\v5.3.1\\esp-idf",
+    "idf.toolsPathWin": "C:\\Users\\grego\\.espressif",
+    "idf.pythonInstallPath": "C:\\Users\\grego\\.espressif\\tools\\idf-python\\3.11.2\\python.exe",
+    "idf.openOcdConfigs": [
+      "board/esp32c3-builtin.cfg"
+    ],
+    "idf.portWin": "COM11",
+    "idf.currentSetup": "C:\\Users\\grego\\esp\\v5.3.1\\esp-idf"
   }

@@ -27,11 +27,10 @@
 #include <string.h>
 
 #define DLBUS_MIN_PULSE_NS 1000      // 1us minimum pulse
-#define DLBUS_TIMEOUT_NS 3000000    // 3ms idle timeout
+#define DLBUS_TIMEOUT_NS 5000000    // 5ms idle timeout
 
 // Page buffer size for accumulated symbols (must be power of 2)
 #define DLBUS_PAGE_BUFFER_SIZE 1024
-#define DLBUS_PAGE_BUFFER_MASK (DLBUS_PAGE_BUFFER_SIZE - 1)
 
 // Enable AddLog support within a C++ library
 extern void AddLog(uint32_t loglevel, PGM_P formatP, ...);
@@ -94,8 +93,9 @@ static bool IRAM_ATTR DlBusRmtRxDoneCallback(rmt_channel_handle_t channel,
     batch.num_symbols = (edata->num_symbols < DLBUS_MAX_SYMBOLS) ? edata->num_symbols : DLBUS_MAX_SYMBOLS;
     
     // Check if this batch ended due to idle (last symbol has duration1 = 0)
-    batch.is_frame_end = (edata->num_symbols > 0 && 
-                          edata->received_symbols[edata->num_symbols - 1].duration1 == 0);
+    //batch.is_frame_end = (edata->num_symbols > 0 && 
+    //                      edata->received_symbols[edata->num_symbols - 1].duration1 == 0);
+    batch.is_frame_end = edata->flags.is_last;
     
     for (size_t i = 0; i < batch.num_symbols; i++) {
         batch.symbols[i] = edata->received_symbols[i];
@@ -221,7 +221,7 @@ DlBusHandle DlBusInit(int gpio_pin) {
     return receiver;
 }
 
-
+uint32_t nFramingErrors = 0;
 void CaptureBit (uint8_t const level, int8_t& current_bit, uint8_t& byte,uint8_t*& pWritePointer){
     if(current_bit == -1){
         // waiting for start
@@ -243,18 +243,33 @@ void CaptureBit (uint8_t const level, int8_t& current_bit, uint8_t& byte,uint8_t
         // stop bit
         if(level == 1){
             // valid stop
+        }else{
+            // framing error
+            nFramingErrors++;
         }
         current_bit = -1; // reset for next byte
     }
 }
+/*
+void AdvanceTime(uint32_t& current_time, uint32_t& next_capture_time) {
+    current_time += FULL_BIT_US;
+    next_capture_time += FULL_BIT_US;
+}
+*/
 
 // Process a complete page of symbols (called when idle timeout triggers)
 static void DlBusProcessPage(DlBusReceiver *receiver) {
     if (receiver->page_len == 0) return;    
+
+    // Debug: track time-to-next-capture at intervals to detect drift
+    int16_t debug_offsets[20];  // Store first 20 offset samples
+    uint32_t debug_offset_count = 0;
     
     const uint32_t FULL_BIT_US = 2000;
-    
-    uint8_t decoded_bytes[128];
+    const uint32_t HALF_BIT_US = 1000;
+    const uint32_t QUARTER_BIT_US = 500;
+
+    uint8_t decoded_bytes[256];
     uint8_t* pWritePointer = &decoded_bytes[0];
     
     uint8_t constructing_byte = 0;
@@ -264,102 +279,121 @@ static void DlBusProcessPage(DlBusReceiver *receiver) {
     uint8_t syncbits_captured = 0;
 
     uint32_t current_time = 0;
+    uint32_t next_capture_time = QUARTER_BIT_US;  // Sample at CENTER of each bit
 
-    // first edge will be recognized at mark 0.5 bit
-    // we want to capture at 0.75 bit, so 0.25 bit after first edge (begin of first item)
-    uint32_t next_capture_time = 0.25*FULL_BIT_US;
+    uint32_t time_accumulated = 0;
+    for(int j = 0; j< receiver->page_len; j++){
+        rmt_symbol_word_t *sym = &receiver->page_buffer[j];
+        uint32_t d0 = sym->duration0;
+        uint32_t d1 = sym->duration1;
+        time_accumulated += d0 + d1;
+    }
 
-    char dbg_str[150];
-    char *dp = dbg_str;
-    uint32_t to_print = (receiver->page_len < 16) ? receiver->page_len : 16;
-    uint32_t syms_printed = 0;
-
-    for (uint32_t i = 0; i < receiver->page_len && pWritePointer < (decoded_bytes+sizeof(decoded_bytes)); i++) {
+    uint32_t i = 0;
+    for ( ;i < receiver->page_len && pWritePointer < (decoded_bytes+sizeof(decoded_bytes)); i++) {
         rmt_symbol_word_t *sym = &receiver->page_buffer[i];
-
-        if(syncbits_captured < syncbits_target){
-            // still in sync bits
-            current_time += sym->duration0;
-            if(current_time > next_capture_time){
-                if(sym->level0 == 1){
-                    // could be one sync bit
-                    syncbits_captured++;
-                }
-                else{
-                    // reset sync
-                    syncbits_captured = 0;
-                }
-                next_capture_time += FULL_BIT_US;
-            }
-            if(syncbits_captured == syncbits_target){
-                AddLog(LOG_LEVEL_DEBUG, PSTR("DLBUS: Sync reached at offset %u us"), current_time);
-                
-                // special case where level0 is synch but level1 is allready data
-                current_time += sym->duration1;
-                if(current_time > next_capture_time){
-                    // need capture last edge (ended on 0)
-                    CaptureBit(sym->level1, current_bit, constructing_byte,pWritePointer);
-                    next_capture_time += FULL_BIT_US;
-                }
-            }
-
-            current_time += sym->duration1;
-            if(current_time > next_capture_time){
-                if(sym->level1 == 1){
-                    // could be one sync bit
-                    syncbits_captured++;
-                }
-                else{
-                    // reset sync
-                    syncbits_captured = 0;
+        
+        // Process duration0/level0
+        uint32_t d0 = sym->duration0;
+        uint8_t l0 = sym->level0;
+        
+        if (d0 > 0) {
+            uint32_t end_time = current_time + d0;
+            
+            // Process all capture points within this duration
+            while (next_capture_time <= end_time && pWritePointer < (decoded_bytes+sizeof(decoded_bytes))) {
+                if (syncbits_captured < syncbits_target) {
+                    // Still looking for sync (16 consecutive HIGH bits)
+                    if (l0 == 1) {
+                        syncbits_captured++;
+                    } else {
+                        syncbits_captured = 0;
+                    }
+                } else {
+                    // Decoding data
+                    CaptureBit(l0, current_bit, constructing_byte, pWritePointer);
                 }
                 next_capture_time += FULL_BIT_US;
             }
-            if(syncbits_captured == syncbits_target){
-                AddLog(LOG_LEVEL_DEBUG, PSTR("DLBUS: Sync reached at offset %u us"), current_time);
+            uint32_t estimated_next_capture_time = next_capture_time;  // downgrade to estimation
+
+            current_time = end_time;
+
+            uint32_t wanted_capture_quarter_periods = 0;
+            wanted_capture_quarter_periods = (estimated_next_capture_time - current_time) / QUARTER_BIT_US;
+            if(((estimated_next_capture_time - current_time) % QUARTER_BIT_US) >= (QUARTER_BIT_US/2)) {
+                // there is one more wanted quarter period, but we have already drifted
+                wanted_capture_quarter_periods++;
             }
+            next_capture_time = current_time + wanted_capture_quarter_periods * QUARTER_BIT_US; // calculate next real capture time
+
+            // Record offset for debugging (sample every ~50 symbols)
+            if (debug_offset_count < 20 && (i % 50) == 0) {
+                debug_offsets[debug_offset_count++] = (int16_t)(estimated_next_capture_time - next_capture_time);
+            }
+            
         }
-        else{
-            if(syms_printed < to_print){
-                dp += sprintf(dp, "%u/%u ", sym->duration0, sym->duration1);
-                syms_printed++;
-            }
-            // not in sync bits anymore
-            current_time += sym->duration0;
-            if(current_time > next_capture_time){
-                // need capture last edge (ended on 0)
-                CaptureBit(sym->level0, current_bit, constructing_byte,pWritePointer);
-                next_capture_time += FULL_BIT_US;
-            }
+        
+        // Process duration1/level1
+        uint32_t d1 = sym->duration1;
+        uint8_t l1 = sym->level1;
+        
+        if (d1 > 0) {
+            uint32_t end_time = current_time + d1;
+            
+            while (next_capture_time <= end_time && pWritePointer < (decoded_bytes+sizeof(decoded_bytes))) {
+                if (syncbits_captured < syncbits_target) {
+                    if (l1 == 1) {
+                        syncbits_captured++;
+                    } else {
+                        syncbits_captured = 0;
+                    }
+                } else {
+                    CaptureBit(l1, current_bit, constructing_byte, pWritePointer);
+                }
 
-            current_time += sym->duration1;
-            if(current_time > next_capture_time){
-                // need capture last edge (ended on 0)
-                CaptureBit(sym->level1, current_bit, constructing_byte,pWritePointer);
                 next_capture_time += FULL_BIT_US;
             }
+            uint32_t estimated_next_capture_time = next_capture_time;  // downgrade to estimation
+            
+            
+            current_time = end_time;
+            
+            uint32_t wanted_capture_quarter_periods = 0;
+            wanted_capture_quarter_periods = (estimated_next_capture_time - current_time) / QUARTER_BIT_US;
+            if(((estimated_next_capture_time - current_time) % QUARTER_BIT_US) >= (QUARTER_BIT_US/2)) {
+                // there is one more wanted quarter period, but we have already drifted
+                wanted_capture_quarter_periods++;
+            }
+            next_capture_time = current_time + wanted_capture_quarter_periods * QUARTER_BIT_US; // calculate next real capture time
         }
+    }
+
+    if(current_bit == 8){
+        // last stop bit will be missed, as it has time 0 (timeout last bit)
+        CaptureBit(1, current_bit, constructing_byte, pWritePointer);
     }
     
     receiver->page_count++;
+
+    // Build debug string with offsets
+    char offset_str[120];
+    char *p = offset_str;
+    for (uint32_t k = 0; k < debug_offset_count && p < offset_str + sizeof(offset_str) - 8; k++) {
+        p += sprintf(p, "%d ", debug_offsets[k]);
+    }
+    if (p > offset_str) *(p-1) = '\0';
+    else offset_str[0] = '\0';
+
+    AddLog(LOG_LEVEL_DEBUG, PSTR("DLBUS: Page %u: %u sym, %.1fms total, parsed %u, %.1fms | FE:%u | CurBit: %d | offsets: %s"),
+           receiver->page_count, receiver->page_len, time_accumulated/1000.0f, i, current_time/1000.0f, nFramingErrors, current_bit, offset_str);
+
+    // Calculate decoded length
+    size_t decoded_len = pWritePointer - decoded_bytes;
     
-    AddLog(LOG_LEVEL_DEBUG, PSTR("DLBUS: Page %u: %u sym, %u bytes"),
-           receiver->page_count, receiver->page_len, pWritePointer - decoded_bytes);
-    
-    // Debug: Print first 16 symbol durations
-    if (dp > dbg_str) *(dp-1) = '\0';
-    AddLog(LOG_LEVEL_DEBUG, PSTR("DLBUS: Raw: %s"), dbg_str);
-    
-    // Print decoded bytes as hex
-    if (pWritePointer != &decoded_bytes[0]) {
-        char hex_str[100];
-        char *p = hex_str;
-        for (uint8_t i = 0; i < (pWritePointer - decoded_bytes) && i < 32; i++) {
-            p += sprintf(p, "%02X ", decoded_bytes[i]);
-        }
-        if (p > hex_str) *(p-1) = '\0';
-        AddLog(LOG_LEVEL_DEBUG, PSTR("DLBUS: Data: %s%s"), 
-               hex_str, (pWritePointer - decoded_bytes) > 32 ? "..." : "");
+    // Call the callback with decoded data (if any)
+    if (decoded_len > 0) {
+        DlBusDataCallback(decoded_bytes, decoded_len);
     }
     
     receiver->page_len = 0;
@@ -369,8 +403,7 @@ uint32_t DlBusProcess(DlBusHandle handle) {
     if (!handle || !handle->initialized) return 0;
     
     DlBusRxBatch batch;
-    uint32_t batches_processed = 0;
-    bool page_complete = false;
+    static uint32_t batches_processed = 0;
     
     // Process all queued batches and add to page buffer
     while (xQueueReceive(handle->receive_queue, &batch, 0) == pdPASS) {
@@ -388,16 +421,26 @@ uint32_t DlBusProcess(DlBusHandle handle) {
         
         // Check if page is complete (idle timeout triggered)
         if (batch.is_frame_end) {
-            page_complete = true;
+            if (handle->page_len > 0) {
+                AddLog(LOG_LEVEL_DEBUG, PSTR("DLBUS: Frame end, %u batches, %u symbols, dropped %u"),
+                    batches_processed, handle->page_len, handle->symbols_dropped);
+                DlBusProcessPage(handle);
+            }
+
+            // reset and handle next batch as new page
+            batches_processed = 0;
+            handle->page_len = 0;
+            handle->symbols_received = 0;
+            handle->symbols_dropped = 0;
         }
     }
     
-    // Process completed page
-    if (page_complete) {
-        DlBusProcessPage(handle);
-    }
+    // Only process if we got a frame end AND we have enough symbols
+    // This prevents processing partial data if DlBusProcess is called too frequently
+    
     
     // Watchdog: if no ISR activity for 5 seconds but we expect signal, try to restart
+    /*
     static uint32_t last_check = 0;
     uint32_t now = xTaskGetTickCount();
     if (now - last_check > pdMS_TO_TICKS(5000)) {
@@ -436,6 +479,7 @@ uint32_t DlBusProcess(DlBusHandle handle) {
             }
         }
     }
+    */
     
     return handle->page_len;
 }

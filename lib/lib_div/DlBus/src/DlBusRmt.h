@@ -34,15 +34,16 @@
 #include "driver/rmt_rx.h"
 
 // DL-Bus timing constants (in microseconds)
-#define DLBUS_CARRIER_HALF_CYCLE_US   1024    // ~488Hz carrier half period
-#define DLBUS_CARRIER_TOLERANCE_US    300     // Tolerance for carrier detection
-#define DLBUS_BIT_DURATION_US         4096    // Duration of one UART bit (2 carrier cycles)
-#define DLBUS_BIT_TOLERANCE_US        800     // Tolerance for bit duration
-#define DLBUS_SYNC_MIN_US             20000   // Minimum sync pulse duration (~20ms)
-#define DLBUS_MAX_SYMBOLS             64      // Max symbols per ISR batch
+#define DLBUS_MAX_SYMBOLS             128     // Max symbols per ISR batch
 
 // Opaque handle for the DL-Bus receiver
 typedef struct DlBusReceiver* DlBusHandle;
+
+// Callback type for decoded data
+typedef void (*DlBusDataCallback_t)(const uint8_t* data, size_t len);
+
+// Callback function (defined in driver, called by library)
+extern void DlBusDataCallback(const uint8_t* data, size_t len);
 
 // Initialize the DL-Bus RMT receiver on the specified GPIO pin
 // Returns handle on success, nullptr on failure
